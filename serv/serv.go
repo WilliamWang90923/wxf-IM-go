@@ -1,6 +1,7 @@
 package serv
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/gobwas/ws"
@@ -10,6 +11,11 @@ import (
 	"net/http"
 	"sync"
 	"time"
+)
+
+const (
+	CommandPing = 100
+	CommandPong = 101
 )
 
 type Server struct {
@@ -44,6 +50,8 @@ func (server *Server) readloop(user string, con net.Conn) error {
 		}
 		if frame.Header.OpCode == ws.OpText {
 			go server.handle(user, string(frame.Payload))
+		} else if frame.Header.OpCode == ws.OpBinary {
+			go server.handleBinary(user, frame.Payload)
 		}
 	}
 }
@@ -59,6 +67,24 @@ func (server *Server) handle(user string, message string) {
 		}
 		logrus.Infof("send to %s : %s", u, broadcast)
 		err := server.writeText(con, broadcast)
+		if err != nil {
+			logrus.Errorf("write to %s failed, error: %v", user, err)
+		}
+	}
+}
+
+func (server *Server) handleBinary(user string, msg []byte) {
+	logrus.Infof("recv message %v from %s", msg, user)
+	server.Lock()
+	defer server.Unlock()
+	i := 0
+	command := binary.BigEndian.Uint16(msg[i : i+2])
+	i += 2
+	payloadLen := binary.BigEndian.Uint32(msg[i : i+4])
+	logrus.Info("command: %v payloadLen: %v", command, payloadLen)
+	if command == CommandPing {
+		u := server.users[user]
+		err := wsutil.WriteServerBinary(u, []byte{0, CommandPong, 0, 0, 0, 0})
 		if err != nil {
 			logrus.Errorf("write to %s failed, error: %v", user, err)
 		}
